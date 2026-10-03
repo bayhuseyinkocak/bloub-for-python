@@ -7,3 +7,8 @@ backgroundColor = "#f9f9f9"
 secondaryBackgroundColor = "#ffffff"
 textColor = "#17203a"
 font = "sans serif"
+
+[server]
+# Fixed port so it never collides with the user's other local servers.
+port = 8506
+headless = true

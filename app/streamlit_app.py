@@ -49,15 +49,21 @@ from bloub.render import render_svg
 from bloub.skins import COLORS, COLOR_BY_ID, SHAPES, SHAPE_BY_ID
 from bloub.states import POSES, SEQUENCE, STATES, STATE_BY_ID
 
-st.set_page_config(page_title="bloub", page_icon="⚫", layout="wide")
+st.set_page_config(page_title="bloub", page_icon="⚫", layout="wide",
+                   initial_sidebar_state="expanded")
 
 # --- shell styling, pulled from the original styles.css design tokens ---------
+# Keep the header visible: it carries the sidebar expand/collapse control, so
+# hiding it would strand the user with no way to reach the nav if the rail
+# ever collapses.
 st.markdown(
     """
     <style>
-    /* chrome: no toolbar, no menu, no footer, no deploy button */
-    #MainMenu, footer, header[data-testid="stHeader"],
-    [data-testid="stToolbar"], [data-testid="stDecoration"] { display: none; }
+    /* chrome: hide footer/deploy/⋮/decor, but KEEP the toolbar container —
+       it holds the "expand sidebar" button when the rail is collapsed. */
+    footer, [data-testid="stDecoration"], [data-testid="stAppDeployButton"],
+    #MainMenu, [data-testid="stMainMenu"], [data-testid="stMainMenuButton"] { display: none; }
+    header[data-testid="stHeader"] { background: transparent; }
     .stApp { background: #f9f9f9; color: #17203a; }
     .block-container { padding-top: 2.2rem; padding-bottom: 4rem; max-width: 1500px; }
     /* left rail */
