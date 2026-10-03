@@ -28,8 +28,8 @@ dependencies = []
 
 [project.optional-dependencies]
 export = [
+  "resvg-py>=0.5",
   "Pillow>=10",
-  "cairosvg>=2.7",
   "imageio>=2.34",
   "imageio-ffmpeg>=0.5",
 ]

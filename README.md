@@ -14,6 +14,10 @@ This repository ships:
 - **A Streamlit app** for customising, previewing and exporting the avatar
   (SVG, PNG, animated SVG, GIF, MP4).
 
+![The avatar going through idle, wink, orbit and burst](docs/demo.gif)
+
+![The 14 states, frozen side by side](docs/states.png)
+
 ## Install
 
 ```bash
@@ -23,7 +27,7 @@ pip install .
 # with the Streamlit app
 pip install ".[app]"
 
-# with PNG / GIF / MP4 export (resvg-py or cairosvg + Pillow + imageio-ffmpeg)
+# with PNG / GIF / MP4 export (resvg-py + Pillow + imageio-ffmpeg; cairosvg optional)
 pip install ".[export]"
 
 # everything, for development
