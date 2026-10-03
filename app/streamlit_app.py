@@ -15,11 +15,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import io
+import time
 
 import streamlit as st
 
 from bloub.bot import Bot
-from bloub.cycles import default_cycle, make_block, total_duration
+from bloub.cycles import clamp_duration, default_cycle, make_block, next_cycle_id, total_duration
 from bloub.engine import BotEngine
 from bloub.expressions import EXPRESSIONS, EXPRESSION_BY_ID
 from bloub.export import (
@@ -92,27 +93,116 @@ def _avatar_gif(bot, size=GIF_TAILLE, background=None):
     return svg_frames_to_gif(frames, size, GIF_FPS, background=background)
 
 
-def _cycle_svgs(blocks, size, background=None):
-    total = total_duration(blocks)
-    fps = 20
-    n = max(1, round(total * fps))
-    out = []
+def _montage_engine_at(blocks, t, shape_id, expr_id):
+    """Engine of the current avatar, replayed up to `t` of the montage.
+
+    Shape and expression are the user's settled settings; only the STATE morphs
+    along the montage — exactly like the original scene.
+    """
     from bloub.cycles import block_at, offset_of
-    for i in range(n):
-        t = (i / n) * total
-        idx = block_at(blocks, t)["index"]
-        eng = BotEngine(RAYON, blocks[idx]["state"])
-        for j in range(idx + 1):
-            off = offset_of(blocks, j)
-            stt = blocks[j]["state"]
-            if j == 0:
-                if eng.state != stt:
-                    eng.reset(stt, off)
-            else:
-                eng.set_state(stt, off)
-        out.append(render_svg(eng.sample(t), size=size, viewbox_half=DEMI_ECRAN,
-                              color=color_hex, paper=PAPER, uid="c"))
-    return out
+    radii = SHAPE_BY_ID.get(shape_id, SHAPE_BY_ID["cercle"])["radii"]
+    expr = EXPRESSION_BY_ID.get(expr_id)
+    idx = block_at(blocks, t)["index"]
+    eng = BotEngine(RAYON, blocks[idx]["state"], radii, expr)
+    for j in range(idx + 1):
+        off = offset_of(blocks, j)
+        stt = blocks[j]["state"]
+        if j == 0:
+            if eng.state != stt:
+                eng.reset(stt, off)
+        else:
+            eng.set_state(stt, off)
+    return eng
+
+
+def _frame_svg_at(blocks, t, size, color, uid, shape_id="cercle", expr_id="neutre"):
+    return render_svg(_montage_engine_at(blocks, t, shape_id, expr_id).sample(t),
+                      size=size, viewbox_half=DEMI_ECRAN, color=color, paper=PAPER, uid=uid)
+
+
+def _tile_svg(state, size, color, uid, shape_id="cercle", expr_id="neutre"):
+    """A block's frozen pose, matching the original BloubBot `frozen-at`."""
+    radii = SHAPE_BY_ID.get(shape_id, SHAPE_BY_ID["cercle"])["radii"]
+    expr = EXPRESSION_BY_ID.get(expr_id)
+    eng = BotEngine(RAYON, state, radii, expr)
+    return render_svg(eng.sample(POSES[state]), size=size, viewbox_half=DEMI_CADRE,
+                      color=color, paper=PAPER, uid=uid)
+
+
+def _cycle_svgs(blocks, size, color, shape_id="cercle", expr_id="neutre"):
+    total = total_duration(blocks)
+    n = max(1, round(total * 20))
+    return [_frame_svg_at(blocks, (i / n) * total, size, color, "c", shape_id, expr_id)
+            for i in range(n)]
+
+
+def _mmss(t):
+    s = max(0, int(t))
+    return f"{s // 60}:{s % 60:02d}"
+
+
+def _nom_cycle(c):
+    return c["name"] or t("cycles.defaultName", lang)
+
+
+def _init_montage_state():
+    if "cycles" not in st.session_state:
+        st.session_state.cycles = [default_cycle()]
+    if "active_id" not in st.session_state:
+        st.session_state.active_id = st.session_state.cycles[0]["id"]
+    st.session_state.setdefault("playing", False)
+    st.session_state.setdefault("t_anchor", 0.0)
+    st.session_state.setdefault("wall_anchor", 0.0)
+
+
+def _active_cycle():
+    cycles = st.session_state.cycles
+    return next((c for c in cycles if c["id"] == st.session_state.active_id), cycles[0])
+
+
+def _now_t(blocks):
+    total = total_duration(blocks) or 1.0
+    if st.session_state.playing:
+        return (st.session_state.t_anchor + time.perf_counter() - st.session_state.wall_anchor) % total
+    return st.session_state.t_anchor % total
+
+
+def _timeline_html(blocks, pos):
+    total = total_duration(blocks) or 1.0
+    cells = []
+    for b in blocks:
+        w = b["duration"] / total * 100.0
+        cells.append(
+            f'<div style="flex:{w:.6f}%;min-width:0;background:#0a0a0c1f;'
+            f'border-right:2px solid #f9f9f9;padding:2px 5px;overflow:hidden;'
+            f'white-space:nowrap;font-size:10px;line-height:20px;'
+            f'color:#0a0a0c">{t("states." + b["state"], lang)}</div>'
+        )
+    pct = (pos / total) * 100.0
+    return (
+        '<div style="position:relative;height:26px;background:#ececec;border-radius:6px;overflow:hidden">'
+        '<div style="display:flex;height:100%;width:100%">' + "".join(cells) + "</div>"
+        f'<div style="position:absolute;top:0;bottom:0;left:{pct:.3f}%;width:2px;background:#0a0a0c"></div>'
+        "</div>"
+    )
+
+
+def _render_player(blocks, t, total, size, color, uid, shape_id, expr_id):
+    st.components.v1.html(_frame_svg_at(blocks, t, size, color, uid, shape_id, expr_id),
+                          height=size + 40, scrolling=False)
+    st.markdown(
+        f"<div style='font-variant-numeric:tabular-nums;font-size:16px;color:#0a0a0c'>"
+        f"{_mmss(t)} / {_mmss(total)}</div>",
+        unsafe_allow_html=True,
+    )
+    st.progress(min(1.0, t / total if total else 1.0))
+    st.markdown(_timeline_html(blocks, t), unsafe_allow_html=True)
+
+
+@st.fragment(run_every=0.08)
+def _live_fragment(blocks, size, color, shape_id, expr_id):
+    total = total_duration(blocks) or 1.0
+    _render_player(blocks, _now_t(blocks), total, size, color, "live", shape_id, expr_id)
 
 
 # --------------------------------------------------------------------------- sidebar
@@ -208,84 +298,197 @@ with tabs[1]:
 # --------------------------------------------------------------------------- Animations
 
 with tabs[2]:
+    _init_montage_state()
     st.markdown("### " + t("rail.animations", lang))
-    if "blocks" not in st.session_state:
-        st.session_state.blocks = default_cycle()["blocks"]
 
-    left, right = st.columns([1, 1.4], gap="large")
+    cycles = st.session_state.cycles
+
+    left, right = st.columns([1, 1.25], gap="large")
+
+    # ============================ left: cycles + block editor + export
     with left:
-        st.markdown("**" + t("timeline.addAnimation", lang) + "**")
-        add_state = st.selectbox(
-            t("panel.animations", lang), SEQUENCE,
-            format_func=lambda x: t("states." + x, lang), key="add_state",
-        )
-        add_dur = st.number_input("⏱ " + t("units.seconds", lang, {"n": ""}).strip(),
-                                  min_value=0.1, max_value=10.0, value=2.0, step=0.1, key="add_dur")
-        b1, b2, b3 = st.columns(3)
-        with b1:
-            if st.button("➕ " + t("timeline.addAnimation", lang), key="btn_add"):
-                from bloub.cycles import clamp_duration
-                st.session_state.blocks = st.session_state.blocks + [{"state": add_state, "duration": clamp_duration(add_state, add_dur)}]
-        with b2:
-            if st.button("✂️ " + t("dialog.cancel", lang) + " (son blok)", key="btn_pop"):
-                if st.session_state.blocks:
-                    st.session_state.blocks = st.session_state.blocks[:-1]
-        with b3:
-            if st.button("↺ " + t("cycles.defaultName", lang), key="btn_reset"):
-                st.session_state.blocks = default_cycle()["blocks"]
+        # -- cycle menu (select / create / rename / delete) --
+        names = [_nom_cycle(c) for c in cycles]
+        active = _active_cycle()
+        c1, c2, c3, c4 = st.columns([2.4, 1, 1, 1])
+        with c1:
+            sel = st.selectbox(t("cycles.defaultName", lang), range(len(cycles)),
+                               format_func=lambda i: names[i], index=cycles.index(active),
+                               key="cycle_sel", label_visibility="collapsed")
+            st.session_state.active_id = cycles[sel]["id"]
+        active = _active_cycle()
+        blocks = active["blocks"]
+        total = total_duration(blocks)
+        with c2:
+            if st.button("＋", key="cycle_new", help=t("cycles.menuNew", lang), use_container_width=True):
+                st.session_state.name_mode = "create"
+        with c3:
+            if st.button("✎", key="cycle_rename", help=t("dialog.nameRenameTitle", lang), use_container_width=True):
+                st.session_state.name_mode = "rename"
+        with c4:
+            if st.button("🗑", key="cycle_del", help=t("cycles.menuRemoveAria", lang, {"name": _nom_cycle(active)}),
+                         disabled=len(cycles) <= 1, use_container_width=True):
+                st.session_state.del_confirm = True
 
-        st.markdown("**" + t("timeline.export", lang) + "**")
-        for i, b in enumerate(st.session_state.blocks):
-            st.markdown(f"{i + 1}. **{t('states.' + b['state'], lang)}** — {b['duration']:.1f}s")
-
-    with right:
-        blocks = st.session_state.blocks
-        if blocks:
-            preview_fps = 20
-            preview_n = min(40, max(1, round(total_duration(blocks) * preview_fps)))
-            svgs = []
-            from bloub.cycles import block_at, offset_of
-            total = total_duration(blocks)
-            for i in range(preview_n):
-                tt = (i / preview_n) * total
-                idx = block_at(blocks, tt)["index"]
-                eng = BotEngine(RAYON, blocks[idx]["state"])
-                for j in range(idx + 1):
-                    off = offset_of(blocks, j)
-                    stt = blocks[j]["state"]
-                    if j == 0:
-                        if eng.state != stt:
-                            eng.reset(stt, off)
+        # -- name dialog (create / rename) --
+        if st.session_state.get("name_mode"):
+            mode = st.session_state.name_mode
+            title = t("dialog.nameRenameTitle", lang) if mode == "rename" else t("dialog.nameCreateTitle", lang)
+            st.markdown("**" + title + "**")
+            default_val = active["name"] if mode == "rename" else t("cycles.newName", lang)
+            name = st.text_input(t("dialog.nameField", lang), value=default_val, key="name_input")
+            n1, n2 = st.columns(2)
+            with n1:
+                if st.button(t("dialog.nameCreate", lang) if mode == "create" else t("dialog.nameRename", lang), key="name_ok"):
+                    if mode == "create":
+                        cycles.append({"id": next_cycle_id(cycles), "name": name.strip(),
+                                       "blocks": [make_block("idle")]})
+                        st.session_state.active_id = cycles[-1]["id"]
                     else:
-                        eng.set_state(stt, off)
-                svgs.append(render_svg(eng.sample(tt), size=240, viewbox_half=DEMI_ECRAN,
-                                       color=color_hex, paper=PAPER, uid="pv"))
-            try:
-                preview_gif = svg_frames_to_gif(svgs, 240, preview_fps, background="#ffffff")
-                st.image(preview_gif, width=300)
-            except Exception as ex:  # noqa: BLE001
-                st.warning(t("export.failed", lang) + " (önizleme): " + str(ex)[:120])
+                        active["name"] = name.strip()
+                    del st.session_state.name_mode
+                    st.rerun()
+            with n2:
+                if st.button(t("dialog.cancel", lang), key="name_cancel"):
+                    del st.session_state.name_mode
+                    st.rerun()
 
-            st.markdown("---")
-            e1, e2 = st.columns(2)
-            with e1:
-                try:
-                    cyc_svgs = _cycle_svgs(blocks, CYCLE_TAILLE["gif"], background="#ffffff")
-                    gif_bytes = svg_frames_to_gif(cyc_svgs, CYCLE_TAILLE["gif"], CYCLE_FPS["gif"], background="#ffffff")
-                    st.download_button(t("export.cycle_gif", lang), gif_bytes,
-                                       file_name="bloub-cycle.gif", mime="image/gif", key="d_cyc_gif")
-                except Exception as ex:  # noqa: BLE001
-                    st.warning(t("export.failed", lang) + " (GIF): " + str(ex)[:120])
-            with e2:
-                try:
-                    cyc_svgs = _cycle_svgs(blocks, CYCLE_TAILLE["mp4"], background="#ffffff")
-                    mp4_bytes = svg_frames_to_mp4(cyc_svgs, CYCLE_TAILLE["mp4"], CYCLE_FPS["mp4"], background="#ffffff")
-                    st.download_button(t("export.cycle_mp4", lang), mp4_bytes,
-                                       file_name="bloub-cycle.mp4", mime="video/mp4", key="d_cyc_mp4")
-                except Exception as ex:  # noqa: BLE001
-                    st.warning(t("export.failed", lang) + " (MP4): " + str(ex)[:120])
+        # -- delete confirmation --
+        if st.session_state.get("del_confirm"):
+            st.warning(t("dialog.removeTitle", lang, {"name": _nom_cycle(active)}))
+            d1, d2 = st.columns(2)
+            with d1:
+                if st.button(t("dialog.removeConfirm", lang), key="del_ok"):
+                    cycles[:] = [c for c in cycles if c["id"] != active["id"]]
+                    if not cycles:
+                        cycles.append(default_cycle())
+                    st.session_state.active_id = cycles[0]["id"]
+                    del st.session_state.del_confirm
+                    st.rerun()
+            with d2:
+                if st.button(t("dialog.cancel", lang), key="del_cancel"):
+                    del st.session_state.del_confirm
+                    st.rerun()
+
+        # -- add animation palette --
+        st.markdown("**" + t("timeline.addAnimation", lang) + "**")
+        for r in range(0, len(SEQUENCE), 4):
+            pal = st.columns(4)
+            for c, sid in enumerate(SEQUENCE[r:r + 4]):
+                with pal[c]:
+                    if st.button(t("states." + sid, lang), key=f"add_{sid}", use_container_width=True):
+                        blocks.append(make_block(sid))
+                        st.rerun()
+
+        # -- block list (reorder / resize / remove) --
+        st.markdown("**" + _nom_cycle(active) + "**")
+        remove_i = None
+        move = None
+        for i, b in enumerate(blocks):
+            row = st.columns([0.7, 2.6, 1.0, 0.55, 0.55, 0.55])
+            with row[0]:
+                st.components.v1.html(_tile_svg(b["state"], 44, color_hex, f"b{i}", shape, expression),
+                                      height=52, scrolling=False)
+            with row[1]:
+                st.markdown("**" + t("states." + b["state"], lang) + "**")
+            with row[2]:
+                dur = st.number_input("s", min_value=0.1, max_value=10.0, value=float(b["duration"]),
+                                      step=0.1, key=f"dur{i}", label_visibility="collapsed")
+                clamped = clamp_duration(b["state"], dur)
+                if clamped != b["duration"]:
+                    b["duration"] = clamped
+            with row[3]:
+                if st.button("◀", key=f"mvL{i}", disabled=(i == 0), help="←", use_container_width=True):
+                    move = (i, i - 1)
+            with row[4]:
+                if st.button("▶", key=f"mvR{i}", disabled=(i == len(blocks) - 1), help="→", use_container_width=True):
+                    move = (i, i + 1)
+            with row[5]:
+                if st.button("✕", key=f"rm{i}", disabled=(len(blocks) <= 1),
+                             help=t("timeline.blockRemoveAria", lang, {"state": t("states." + b["state"], lang), "duration": ""}).strip(),
+                             use_container_width=True):
+                    remove_i = i
+        if remove_i is not None:
+            blocks.pop(remove_i)
+            st.rerun()
+        if move is not None:
+            a, b2 = move
+            blocks[a], blocks[b2] = blocks[b2], blocks[a]
+            st.rerun()
+
+        # -- export montage (format + background + progress) --
+        st.markdown("---")
+        st.markdown("**" + t("timeline.export", lang) + "**")
+        fmt = st.radio(t("export.cycleFormat", lang), ["mp4", "gif"],
+                       format_func=lambda x: t("export.cycle_" + x, lang),
+                       index=0, key="cycle_fmt", horizontal=True)
+        bg = "#ffffff"
+        if fmt == "gif":
+            fond = st.radio(t("export.gifBackground", lang), ["blanc", "transparent"],
+                            format_func=lambda x: t("export.fond_" + x, lang),
+                            index=0, key="cycle_fond", horizontal=True)
+            bg = "#ffffff" if fond == "blanc" else None
+
+        if st.button("⬇ " + t("timeline.export", lang), key="cycle_export", type="primary"):
+            try:
+                with st.spinner(t("export.cycleProgress", lang)):
+                    if fmt == "mp4":
+                        svgs = _cycle_svgs(blocks, CYCLE_TAILLE["mp4"], color_hex, shape, expression)
+                        data = svg_frames_to_mp4(svgs, CYCLE_TAILLE["mp4"], CYCLE_FPS["mp4"], background="#ffffff")
+                        st.session_state.export_bytes = data
+                        st.session_state.export_name = "bloub-cycle.mp4"
+                        st.session_state.export_mime = "video/mp4"
+                    else:
+                        svgs = _cycle_svgs(blocks, CYCLE_TAILLE["gif"], color_hex, shape, expression)
+                        data = svg_frames_to_gif(svgs, CYCLE_TAILLE["gif"], CYCLE_FPS["gif"], background=bg)
+                        st.session_state.export_bytes = data
+                        st.session_state.export_name = "bloub-cycle.gif"
+                        st.session_state.export_mime = "image/gif"
+            except Exception as ex:  # noqa: BLE001
+                st.warning(t("export.failed", lang) + ": " + str(ex)[:120])
+
+        if "export_bytes" in st.session_state:
+            st.download_button(t("export.gifConfirm", lang), st.session_state.export_bytes,
+                               file_name=st.session_state.export_name,
+                               mime=st.session_state.export_mime, key="cycle_dl")
+
+    # ============================ right: live player
+    with right:
+        st.markdown("**" + t("timeline.preview", lang) + "**")
+        playing = st.session_state.playing
+
+        if playing:
+            _live_fragment(blocks, 340, color_hex, shape, expression)
         else:
-            st.info(t("dialog.cancel", lang))
+            _render_player(blocks, _now_t(blocks), total, 340, color_hex, "still", shape, expression)
+
+        pc1, pc2, pc3 = st.columns([1.3, 1, 3.5])
+        with pc1:
+            if st.button(("⏸ " + t("timeline.pause", lang)) if playing else ("▶ " + t("timeline.play", lang)),
+                         key="toggle_play", use_container_width=True):
+                if playing:
+                    st.session_state.t_anchor = _now_t(blocks)
+                    st.session_state.playing = False
+                else:
+                    if st.session_state.t_anchor >= total - 0.001:
+                        st.session_state.t_anchor = 0.0
+                    st.session_state.wall_anchor = time.perf_counter()
+                    st.session_state.playing = True
+                st.rerun()
+        with pc2:
+            if st.button("↺", key="restart", help="0:00", use_container_width=True):
+                st.session_state.t_anchor = 0.0
+                st.session_state.wall_anchor = time.perf_counter()
+                st.rerun()
+        with pc3:
+            val = st.slider("seek", 0.0, max(total, 0.1),
+                            min(float(st.session_state.t_anchor), total),
+                            step=0.1, key="seek_slider", label_visibility="collapsed")
+            if abs(val - st.session_state.t_anchor) > 0.001:
+                st.session_state.t_anchor = val
+                if playing:
+                    st.session_state.wall_anchor = time.perf_counter()
+                st.rerun()
 
 # --------------------------------------------------------------------------- Settings
 
