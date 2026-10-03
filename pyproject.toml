@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bloub-python"
+version = "0.1.0"
+description = "Python port of bloub: an SVG recreation of the x.ai bot avatar, with a Streamlit interface."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "Hüseyin Koçak" },
+  { name = "Jérémy Perret" },
+]
+keywords = ["svg", "animation", "avatar", "streamlit", "morphing", "x.ai"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Multimedia :: Graphics",
+]
+
+# The core package is pure stdlib (no runtime dependencies).
+# Everything else is opt-in via extras.
+dependencies = []
+
+[project.optional-dependencies]
+export = [
+  "Pillow>=10",
+  "cairosvg>=2.7",
+  "imageio>=2.34",
+  "imageio-ffmpeg>=0.5",
+]
+app = [
+  "streamlit>=1.36",
+]
+dev = [
+  "pytest>=8",
+  "numpy>=1.26",
+]
+
+[project.urls]
+Repository = "https://github.com/bayhuseyinkocak/bloub-for-python"
+Upstream = "https://github.com/jeremy-prt/bloub"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bloub"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
