@@ -51,6 +51,50 @@ from bloub.states import POSES, SEQUENCE, STATES, STATE_BY_ID
 
 st.set_page_config(page_title="bloub", page_icon="⚫", layout="wide")
 
+# --- shell styling, pulled from the original styles.css design tokens ---------
+st.markdown(
+    """
+    <style>
+    /* chrome: no toolbar, no menu, no footer, no deploy button */
+    #MainMenu, footer, header[data-testid="stHeader"],
+    [data-testid="stToolbar"], [data-testid="stDecoration"] { display: none; }
+    .stApp { background: #f9f9f9; color: #17203a; }
+    .block-container { padding-top: 2.2rem; padding-bottom: 4rem; max-width: 1500px; }
+    /* left rail */
+    section[data-testid="stSidebar"] {
+      background: #f9f9f9;
+      border-right: 1px solid #e3e5ea;
+    }
+    section[data-testid="stSidebar"] .block-container { padding-top: 1.6rem; }
+    .bloub-wordmark {
+      font-weight: 900; letter-spacing: -0.045em; font-size: 2.6rem;
+      line-height: 0.9; color: #17203a; margin: 0 0 0.4rem;
+    }
+    /* radio (nav + language) reads as the original rail list */
+    .stRadio label { color: #6e7382; }
+    .stRadio label:has(input:checked) { color: #17203a; font-weight: 600; }
+    /* buttons: rounded, ink primary */
+    .stButton > button, .stDownloadButton > button {
+      border-radius: 0.75rem;
+      border: 1px solid #e3e5ea;
+      background: #ffffff;
+      color: #17203a;
+    }
+    .stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] {
+      background: #17203a; color: #f9f9f9; border: none;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover { border-color: #17203a; }
+    /* inputs */
+    .stSelectbox div[data-baseweb="select"] > div, .stNumberInput input, .stTextInput input {
+      border-radius: 0.6rem;
+    }
+    .stCaption { color: #6e7382; }
+    hr { border-color: #e3e5ea; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 PAPER = "#f9f9f9"
 
 
@@ -68,6 +112,16 @@ def _svg_download_button(label, svg_str, filename, key):
 def _render_avatar(bot, time=1.0, size=320, viewbox_half=DEMI_CADRE, uid="av"):
     return render_svg(bot.engine.sample(time), size=size, viewbox_half=viewbox_half,
                       color=bot.color_hex, paper=PAPER, uid=uid, aria_label=t("app.botAria", lang))
+
+
+def _appearance():
+    """Current shape / color / expression, readable from any view (not just
+    Customise): the selectboxes write these keys into session_state."""
+    shape = st.session_state.get("shape", "cercle")
+    color = st.session_state.get("color", "encre")
+    expression = st.session_state.get("expression", "neutre")
+    bot = Bot(shape=shape, color=color, expression=expression, paper=PAPER)
+    return shape, color, expression, bot
 
 
 def _animated_avatar_svg(bot, size=320, viewbox_half=DEMI_CADRE, uid="av"):
@@ -205,30 +259,31 @@ def _live_fragment(blocks, size, color, shape_id, expr_id):
     _render_player(blocks, _now_t(blocks), total, size, color, "live", shape_id, expr_id)
 
 
-# --------------------------------------------------------------------------- sidebar
+# --------------------------------------------------------------------------- sidebar (left rail)
+
+lang_names = {l["id"]: l["nom"] + " " + l["emoji"] for l in LANGUES}
+lang = st.session_state.get("lang", "tr")
 
 with st.sidebar:
-    st.markdown("### bloub")
-    lang_names = {l["id"]: l["nom"] + " " + l["emoji"] for l in LANGUES}
-    lang = st.radio(
-        t("settings.language", "en"),
-        options=[l["id"] for l in LANGUES],
-        format_func=lambda x: lang_names[x],
-        index=[l["id"] for l in LANGUES].index("tr"),
-        key="lang",
+    st.markdown('<div class="bloub-wordmark">bloub</div>', unsafe_allow_html=True)
+    view = st.radio(
+        "nav",
+        ["customize", "states", "animations", "settings"],
+        format_func=lambda x: {
+            "customize": t("rail.customize", lang),
+            "states": t("panel.animations", lang) + " · " + t("states.idle", lang) + "…",
+            "animations": t("rail.animations", lang),
+            "settings": t("rail.settings", lang),
+        }[x],
+        index=0,
+        key="view",
+        label_visibility="collapsed",
     )
     st.caption(t("app.title", lang))
 
-tabs = st.tabs([
-    t("rail.customize", lang),
-    t("panel.animations", lang) + " — " + t("states.idle", lang) + "…",
-    t("rail.animations", lang),
-    t("rail.settings", lang),
-])
+# --------------------------------------------------------------------------- Avatar (Customise)
 
-# --------------------------------------------------------------------------- Avatar
-
-with tabs[0]:
+if view == "customize":
     col_a, col_b = st.columns([1, 1.6], gap="large")
 
     with col_a:
@@ -279,26 +334,25 @@ with tabs[0]:
     with c5:
         st.markdown("")
 
-# --------------------------------------------------------------------------- States
+# --------------------------------------------------------------------------- States (gallery)
 
-with tabs[1]:
+elif view == "states":
+    shape, color, expression, _bot = _appearance()
+    color_hex = _bot.color_hex
     st.markdown("### " + t("panel.animations", lang))
-    cards = []
-    for sid in SEQUENCE:
-        eng = BotEngine(RAYON, sid)
-        svg = render_svg(eng.sample(POSES[sid]), size=150, viewbox_half=DEMI_CADRE,
-                         color="#0a0a0c", paper=PAPER, uid="st-" + sid, aria_label=t("states." + sid, lang))
-        cards.append((t("states." + sid, lang), svg))
-    cols = st.columns(7)
-    for i, (label, svg) in enumerate(cards):
-        with cols[i % 7]:
-            st.components.v1.html(svg, height=170, scrolling=False)
-            st.caption(label)
+    cols = st.columns(4)
+    for i, sid in enumerate(SEQUENCE):
+        with cols[i % 4]:
+            st.components.v1.html(_tile_svg(sid, 150, color_hex, "st-" + sid, shape, expression),
+                                  height=170, scrolling=False)
+            st.caption(t("states." + sid, lang))
 
 # --------------------------------------------------------------------------- Animations
 
-with tabs[2]:
+elif view == "animations":
     _init_montage_state()
+    shape, color, expression, _bot = _appearance()
+    color_hex = _bot.color_hex
     st.markdown("### " + t("rail.animations", lang))
 
     cycles = st.session_state.cycles
@@ -492,9 +546,17 @@ with tabs[2]:
 
 # --------------------------------------------------------------------------- Settings
 
-with tabs[3]:
+elif view == "settings":
     st.markdown("### " + t("settings.title", lang))
-    st.markdown("**" + t("settings.language", lang) + "**: " + lang_names[lang])
+    st.markdown("**" + t("settings.language", lang) + "**")
+    lang = st.radio(
+        "language",
+        options=[l["id"] for l in LANGUES],
+        format_func=lambda x: lang_names[x],
+        index=[l["id"] for l in LANGUES].index("tr"),
+        key="lang",
+    )
+    st.markdown("---")
     st.markdown(t("settings.credits", lang, {"name": "Jérémy Perret"}))
     st.markdown("[GitHub](https://github.com/jeremy-prt/bloub) · [bu port](https://github.com/bayhuseyinkocak/bloub-for-python)")
     st.caption(t("app.title", lang))

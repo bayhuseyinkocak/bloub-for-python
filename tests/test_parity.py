@@ -74,7 +74,17 @@ def test_constants():
     assert close(decor.DOT_X, c["DOT_X"])
     assert face.EYE_SPLIT == c["EYE_SPLIT"]
     # Analytically-built shapes differ from JS by <=1 ULP (libm vs V8); invisible after r2 rounding.
-    assert close({s["id"]: s["radii"] for s in skins.SHAPES}, {s["id"]: s["radii"] for s in c["SHAPES"]})
+    # The port ADDS three shapes (oeuf/bulle/rond) that the TS catalogue has no
+    # counterpart for, so compare on the shared ids only and check that the
+    # additions did not disturb them.
+    ported = {s["id"]: s["radii"] for s in skins.SHAPES}
+    upstream = {s["id"]: s["radii"] for s in c["SHAPES"]}
+    assert close({k: ported[k] for k in upstream}, upstream)
+    assert [s["id"] for s in skins.SHAPES][:len(c["SHAPES"])] == [s["id"] for s in c["SHAPES"]]
+    for extra in ("oeuf", "bulle", "rond"):
+        assert extra in ported
+        assert len(ported[extra]) == profiles.PROFILE_SAMPLES
+        assert max(ported[extra]) > 0.5
     assert skins.COLORS == c["COLORS"]
     exp = [{"id": x["id"], "gaze": x["gaze"], "split": x["split"], "eyes": x["eyes"]} for x in expr_mod.EXPRESSIONS]
     assert close(exp, c["EXPRESSIONS"])

@@ -79,3 +79,81 @@ def test_sample_is_pure_function_of_time():
     eng.sample(3.0)
     again = eng.sample(1.0)
     assert again.bodyPath == a.bodyPath
+
+
+# --------------------------------------------------------------------------- added shapes
+
+ADDED_SHAPES = ("oeuf", "bulle", "rond")
+
+
+def test_added_shapes_are_well_formed():
+    from bloub.skins import SHAPES, SHAPE_BY_ID
+    from bloub.profiles import PROFILE_SAMPLES
+
+    assert [s["id"] for s in SHAPES][-3:] == list(ADDED_SHAPES)
+    for sid in ADDED_SHAPES:
+        radii = SHAPE_BY_ID[sid]["radii"]
+        assert len(radii) == PROFILE_SAMPLES
+        # A silhouette must stay positive and bounded: morphing is a linear
+        # interpolation of radii, so a hole or an outlier would bend every blend.
+        assert all(r > 0.05 for r in radii), sid
+        assert 0.9 < max(radii) <= 1.2, sid
+        # No silhouette may be star-shaped around a point outside itself.
+        assert max(radii) / min(radii) < 3.0, sid
+
+
+def test_added_shapes_have_face_offsets_and_labels():
+    from bloub.i18n import DICTS
+    from bloub.skins import SHAPES
+    from bloub import _eyefit_table
+
+    for sid in ADDED_SHAPES:
+        assert sid in _eyefit_table.TABLE, sid
+        assert _eyefit_table.TABLE[sid], sid
+    for lang, dic in DICTS.items():
+        for s in SHAPES:
+            assert dic["shapes"].get(s["id"]), f"{lang} missing shapes.{s['id']}"
+
+
+def test_egg_tapered_end_points_up():
+    # theta = -pi/2 is up (y grows downwards): the egg is narrower on top.
+    from bloub.shape import radius_at_angle
+    from bloub.skins import SHAPE_BY_ID
+
+    radii = SHAPE_BY_ID["oeuf"]["radii"]
+    assert radius_at_angle(radii, -math.pi / 2) < radius_at_angle(radii, math.pi / 2)
+
+
+def test_chubby_is_wider_than_tall():
+    from bloub.shape import radius_at_angle
+    from bloub.skins import SHAPE_BY_ID
+
+    radii = SHAPE_BY_ID["rond"]["radii"]
+    assert radius_at_angle(radii, 0.0) > radius_at_angle(radii, -math.pi / 2)
+
+
+def test_speech_bubble_tail_is_on_the_left():
+    from bloub.shape import radius_at_angle
+    from bloub.skins import SHAPE_BY_ID
+
+    radii = SHAPE_BY_ID["bulle"]["radii"]
+    assert radius_at_angle(radii, math.pi) > radius_at_angle(radii, 0.0)
+
+
+def test_added_shapes_render_and_morph():
+    """Each new shape must render, and morph cleanly from and to the circle."""
+    from bloub.skins import SHAPE_BY_ID
+
+    for sid in ADDED_SHAPES:
+        radii = SHAPE_BY_ID[sid]["radii"]
+        eng = BotEngine(100, "idle", radii)
+        frame = eng.sample(0.0)
+        assert frame.bodyPath.startswith("M") and frame.bodyPath.endswith("Z")
+        assert len(frame.eyes) == 2
+        # morphing in from the circle must not produce NaN coordinates
+        eng2 = BotEngine(100, "idle", radii)
+        eng2.set_shape(radii, 0.0)
+        mid = eng2.sample(0.2)
+        assert "nan" not in mid.bodyPath.lower()
+        # re-reading the same date is stable (purity holds with a custom shape)
+        assert eng2.sample(0.2).bodyPath == mid.bodyPath

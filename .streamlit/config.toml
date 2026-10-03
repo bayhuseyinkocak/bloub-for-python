@@ -1,0 +1,9 @@
+# bloub — original palette (styles.css): paper #f9f9f9, ink #17203a,
+# line #e3e5ea, muted #6e7382, danger #d63c34.
+[theme]
+base = "light"
+primaryColor = "#17203a"
+backgroundColor = "#f9f9f9"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#17203a"
+font = "sans serif"

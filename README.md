@@ -42,7 +42,7 @@ streamlit run app/streamlit_app.py
 
 The tabs:
 
-- **Customise** — shape (8), colour (12), expression (16) with a live animated
+- **Customise** — shape (11), colour (12), expression (16) with a live animated
   preview, plus SVG / PNG / animated-SVG / GIF download.
 - **States** — the 14 catalogue states side by side.
 - **Animations** — a simple montage editor: add / remove blocks, preview as GIF,
